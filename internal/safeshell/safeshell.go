@@ -155,10 +155,9 @@ func CommandContextWithOptions(ctx context.Context, opts Options, name string, a
 	}
 
 	cmdCtx := ctx
+	var cancelTimeout context.CancelFunc
 	if opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		cmdCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		_ = cancel
+		cmdCtx, cancelTimeout = context.WithTimeout(ctx, opts.Timeout)
 	}
 
 	cmd := exec.CommandContext(cmdCtx, name, args...)
@@ -172,6 +171,26 @@ func CommandContextWithOptions(ctx context.Context, opts Options, name string, a
 		cmd.Stdin = opts.Stdin
 	}
 
+	// Run the process in its own group (on platforms that support it) so
+	// that cancellation can terminate the entire subprocess tree, not just
+	// the direct child. Without this, a command that forks children (e.g.
+	// a shell script) can outlive its own timeout: killing only the direct
+	// child leaves the grandchild running and holding the stdout/stderr
+	// pipes open, which blocks Wait until the orphan exits on its own.
+	configureProcessGroup(cmd)
+
+	if cancelTimeout != nil {
+		cmd.Cancel = func() error {
+			err := killProcessGroup(cmd)
+			cancelTimeout()
+			return err
+		}
+		// Bound how long Wait can block on lingering I/O after cancellation,
+		// so a hung or orphaned descendant can never block the caller
+		// indefinitely even if the group kill above can't fully apply.
+		cmd.WaitDelay = 2 * time.Second
+	}
+
 	return cmd, nil
 }
 
@@ -182,14 +201,10 @@ func Execute(ctx context.Context, name string, args ...string) (*Result, error) 
 
 // ExecuteWithOptions executes a command securely with full configuration options.
 func ExecuteWithOptions(ctx context.Context, opts Options, name string, args ...string) (*Result, error) {
-	var cancel context.CancelFunc
-	cmdCtx := ctx
-	if opts.Timeout > 0 {
-		cmdCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		defer cancel()
-	}
-
-	cmd, err := CommandContextWithOptions(cmdCtx, opts, name, args...)
+	// CommandContextWithOptions applies opts.Timeout itself and ties the
+	// resulting context's cancellation to killing the process (group), so
+	// no separate timeout wrapping is needed here.
+	cmd, err := CommandContextWithOptions(ctx, opts, name, args...)
 	if err != nil {
 		return nil, err
 	}
