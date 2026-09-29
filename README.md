@@ -8,6 +8,9 @@ Speedgrapher operates across three integrated surfaces powered by embedded Agent
 2. **Headless CLI**: Provides direct subshell tool invocation (`fog`, `slop`, `seo`, `vale`) via `speedgrapher call`, alongside surface management commands (`install`, `uninstall`, `init`, `list`).
 3. **Embedded Agent Skills**: Bundled operational personas and writing guides (`@deslopify`, `@inverted-pyramid`, `@tech-interviewer`, `@tech-writer`, `@tech-reviewer`, `@tech-publisher`) unpacked directly into agent workspaces.
 
+> [!TIP]
+> Looking for an end-to-end guide on setting up and using Speedgrapher across **Antigravity (AGY)** and **Warp**? Check out [**README-how-to-workflow.md**](README-how-to-workflow.md).
+
 ---
 
 ## Installation
@@ -27,11 +30,29 @@ curl -fsSL https://raw.githubusercontent.com/danicat/speedgrapher/main/install.s
 ### Option B: Go Toolchain (`go install` + `speedgrapher install`)
 
 ```bash
-# 1. Install binary
+# 1. Install binary from remote repo
 go install github.com/danicat/speedgrapher/cmd/speedgrapher@latest
 
 # 2. Configure surfaces (registers MCP server and unpacks embedded skills)
 speedgrapher install
+```
+
+### Option C: Build & Run from Local Source (Cloned Repository)
+
+If you are working directly in this repository:
+
+```bash
+# 1. Compile the local binary (outputs to bin/speedgrapher)
+make build
+
+# 2. (Recommended) Install the binary to your Go bin path ($GOPATH/bin or ~/go/bin) so 'speedgrapher' is globally on your PATH
+go install ./cmd/speedgrapher
+
+# 3. Register as an MCP server and unpack skills into your local agent environment (~/.gemini/config)
+# If 'speedgrapher' is in PATH:
+speedgrapher install
+# Or directly using the compiled binary:
+./bin/speedgrapher install
 ```
 
 #### Granular Surface Management Flags
@@ -55,11 +76,11 @@ speedgrapher uninstall -w
 
 ## Headless CLI Manual
 
-For agents operating in subshells or environments without native MCP integration, all tools can be invoked via JSON payloads or standard input using the `call` subcommand:
+For agents operating in subshells or environments without native MCP integration, all tools can be invoked via JSON payloads or standard input using the `call` subcommand (substitute `./bin/speedgrapher` if running directly from a local build without `go install`):
 
 ```bash
 # Print help and usage
-speedgrapher
+speedgrapher # or ./bin/speedgrapher
 
 # List all available editorial tools
 speedgrapher list
@@ -81,17 +102,93 @@ speedgrapher call vale '{"text": "This is very unique."}'
 cat draft.md | speedgrapher call slop
 ```
 
-### MCP Server Execution
+### MCP Server Execution: Stdio vs. Streamable HTTP
 
-Speedgrapher can run as a standard stdio server or as a network-accessible streamable HTTP service:
+Speedgrapher supports two MCP transport protocols: **stdio** (default for local coding clients) and **streamable HTTP** (for network-accessible, containerized, or web-based workflows).
 
+| Dimension | Stdio Mode (`stdio`) | Streamable HTTP Mode (`http`) |
+| :--- | :--- | :--- |
+| **How it runs** | Child subprocess spawned on-demand by the client | Long-running daemon listening on a TCP port |
+| **Communication** | Process pipes (`stdin` / `stdout`) | HTTP POST with Server-Sent Events (SSE) streaming |
+| **Lifecycle** | Managed entirely by the IDE/agent | Managed externally (systemd, Docker, background process) |
+| **Ideal for** | Local IDEs (Antigravity, Claude Desktop, Cursor, CLI) | Shared team services, Docker/remote VMs, web frontends, CI/CD |
+
+---
+
+#### 1. Stdio Mode (Standard for Coding Clients & IDEs)
+
+In stdio mode, your IDE or agent directly spawns the `speedgrapher mcp` command as a child process and communicates via JSON-RPC 2.0 frames over standard input/output. No ports are opened.
+
+**Run manually:**
 ```bash
-# Run stdio MCP server (standard for MCP clients like Claude Code or Gemini)
 speedgrapher mcp
-
-# Run streamable HTTP MCP server
-speedgrapher mcp --listen=:8080
+# or: speedgrapher mcp --transport=stdio
 ```
+
+**Client Configuration (`mcp_config.json`):**
+```json
+{
+  "mcpServers": {
+    "speedgrapher": {
+      "command": "speedgrapher",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+*(Running `speedgrapher install` automatically writes this configuration for your agent environment).*
+
+---
+
+#### 2. Streamable HTTP Mode (Network-Accessible Daemon)
+
+In HTTP mode, Speedgrapher runs as a persistent service handling MCP JSON-RPC requests via Server-Sent Events (SSE) over HTTP with built-in CORS support.
+
+**Start the server:**
+```bash
+speedgrapher mcp --listen=:8080
+# or specify host:
+speedgrapher mcp --listen=127.0.0.1:8080
+```
+
+**Client Configuration (Remote / HTTP-capable MCP Clients):**
+```json
+{
+  "mcpServers": {
+    "speedgrapher": {
+      "url": "http://localhost:8080"
+    }
+  }
+}
+```
+
+**Direct Usage via `curl` / HTTP Clients:**
+
+You can test and call the streamable server directly with any HTTP client:
+
+* **List available tools:**
+  ```bash
+  curl -s -X POST http://localhost:8080 \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}'
+  ```
+
+* **Invoke a tool (e.g. `slop` or `fog`):**
+  ```bash
+  curl -s -X POST http://localhost:8080 \
+    -H "Content-Type: application/json" \
+    -d '{
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/call",
+      "params": {
+        "name": "slop",
+        "arguments": {
+          "text": "In today'\''s fast-paced world, delve into the intricate tapestry of AI."
+        }
+      }
+    }'
+  ```
 
 ---
 
@@ -183,6 +280,12 @@ Compile the server binary to `bin/speedgrapher`:
 ```bash
 make build
 ```
+*(By default, the version is automatically derived from the latest git tag and commit distance via `git describe`).*
+
+To compile with a specific custom version locally without creating a Git tag:
+```bash
+make build VERSION=0.10.1
+```
 
 Run test suite across all packages:
 ```bash
@@ -194,19 +297,30 @@ Generate test coverage report:
 make test-cov
 ```
 
-### Releasing
+### Versioning & Release Workflow
 
-Speedgrapher relies on Git tags for versioning. Build versions are dynamically injected at compile time:
+Speedgrapher adheres to **ADR-0005**: the **Git tag is the single source of truth** for versions. Versions are **not** hardcoded in source files—instead, `Makefile` injects the version dynamically into the binary at compile time via Go linker flags (`-ldflags "-X main.version=..."`).
+
+Therefore, for an official release, **you must create the Git tag first, and then build the release binaries**:
 
 ```bash
-# 1. Create and push release tag
-make bump-version VERSION=0.8.0
-git push origin v0.8.0
+# 1. Run all tests to ensure the working tree is clean and valid
+make test
 
-# 2. Test release packaging locally
+# 2. Tag the release commit (creates git tag v<VERSION>)
+make bump-version VERSION=0.10.1
+
+# 3. Compile binary (now automatically stamped with 0.10.1)
+make build
+./bin/speedgrapher version
+
+# 4. (Optional) Test full cross-platform release packaging locally via GoReleaser
 make snapshot
 
-# 3. Trigger production release via GoReleaser
+# 5. Push the new tag to your remote repository
+git push origin v0.10.1
+
+# 6. Trigger production release distribution via GoReleaser (if building release artifacts)
 make release
 ```
 
