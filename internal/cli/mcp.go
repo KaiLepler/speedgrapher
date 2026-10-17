@@ -20,8 +20,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/danicat/speedgrapher/internal/config"
-	"github.com/danicat/speedgrapher/internal/server"
+	"github.com/KaiLepler/speedgrapher/internal/config"
+	"github.com/KaiLepler/speedgrapher/internal/server"
 	"github.com/spf13/cobra"
 )
 

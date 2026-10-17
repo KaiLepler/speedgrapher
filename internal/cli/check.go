@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/danicat/speedgrapher/internal/safeshell"
+	"github.com/KaiLepler/speedgrapher/internal/safeshell"
 	"github.com/spf13/cobra"
 )
 

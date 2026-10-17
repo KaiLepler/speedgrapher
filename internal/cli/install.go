@@ -25,7 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/danicat/speedgrapher/skills"
+	"github.com/KaiLepler/speedgrapher/skills"
 	"github.com/spf13/cobra"
 )
 

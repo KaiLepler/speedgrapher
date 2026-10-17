@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/danicat/speedgrapher/internal/safeshell"
+	"github.com/KaiLepler/speedgrapher/internal/safeshell"
 )
 
 func TestValidate(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/danicat/speedgrapher/internal/instructions"
+	"github.com/KaiLepler/speedgrapher/internal/instructions"
 )
 
 func TestGetInstructions(t *testing.T) {

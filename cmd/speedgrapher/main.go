@@ -25,7 +25,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
-	"github.com/danicat/speedgrapher/internal/cli"
+	"github.com/KaiLepler/speedgrapher/internal/cli"
 )
 
 const defaultVersion = "dev"

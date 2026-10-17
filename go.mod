@@ -1,4 +1,4 @@
-module github.com/danicat/speedgrapher
+module github.com/KaiLepler/speedgrapher
 
 go 1.27.1
 

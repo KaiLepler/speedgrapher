@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-REPO="danicat/speedgrapher"
+REPO="KaiLepler/speedgrapher"
 VERSION="latest"
 BUILD_FROM_SOURCE="false"
 INIT_ARGS=()
@@ -24,7 +24,7 @@ Speedgrapher Installer
 
 Usage:
   install.sh [components] [options]
-  curl -fsSL https://raw.githubusercontent.com/danicat/speedgrapher/main/install.sh | bash -s -- [components] [options]
+  curl -fsSL https://raw.githubusercontent.com/KaiLepler/speedgrapher/main/install.sh | bash -s -- [components] [options]
 
 Components (default: all):
   --mcp                    Register the MCP server in mcp_config.json

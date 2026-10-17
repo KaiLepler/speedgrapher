@@ -21,17 +21,17 @@ Downloads the latest prebuilt release binary (via GoReleaser) and automatically 
 
 ```bash
 # Global install (Default: ~/.gemini/config)
-curl -fsSL https://raw.githubusercontent.com/danicat/speedgrapher/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KaiLepler/speedgrapher/main/install.sh | bash
 
 # Workspace-scoped install (.agents/)
-curl -fsSL https://raw.githubusercontent.com/danicat/speedgrapher/main/install.sh | bash -s -- -w
+curl -fsSL https://raw.githubusercontent.com/KaiLepler/speedgrapher/main/install.sh | bash -s -- -w
 ```
 
 ### Option B: Go Toolchain (`go install` + `speedgrapher install`)
 
 ```bash
 # 1. Install binary from remote repo
-go install github.com/danicat/speedgrapher/cmd/speedgrapher@latest
+go install github.com/KaiLepler/speedgrapher/cmd/speedgrapher@latest
 
 # 2. Configure surfaces (registers MCP server and unpacks embedded skills)
 speedgrapher install

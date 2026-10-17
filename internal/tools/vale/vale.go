@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/danicat/speedgrapher/internal/safeshell"
+	"github.com/KaiLepler/speedgrapher/internal/safeshell"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 

@@ -16,7 +16,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/danicat/speedgrapher/internal/safeshell"
+	"github.com/KaiLepler/speedgrapher/internal/safeshell"
 )
 
 const valeVersion = "3.13.1"

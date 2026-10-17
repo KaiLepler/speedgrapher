@@ -22,10 +22,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/danicat/speedgrapher/internal/tools/fog"
-	"github.com/danicat/speedgrapher/internal/tools/seo"
-	"github.com/danicat/speedgrapher/internal/tools/slop"
-	"github.com/danicat/speedgrapher/internal/tools/vale"
+	"github.com/KaiLepler/speedgrapher/internal/tools/fog"
+	"github.com/KaiLepler/speedgrapher/internal/tools/seo"
+	"github.com/KaiLepler/speedgrapher/internal/tools/slop"
+	"github.com/KaiLepler/speedgrapher/internal/tools/vale"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
