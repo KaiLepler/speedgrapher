@@ -69,9 +69,13 @@ Other useful targets in the [Makefile](file:///Users/kai/Developer/GitHub/speedg
 
 Dependabot ([.github/dependabot.yml](file:///Users/kai/Developer/GitHub/speedgrapher/.github/dependabot.yml)) opens PRs for dependency bumps. Merge them after CI and `make test` pass.
 
-### 1.2 Pulling changes from upstream (danicat)
+### 1.2 Pulling changes from the original project (danicat, optional)
 
-Your fork only has `origin` right now. To get Dani's upstream changes, add it once:
+> [!NOTE]
+> The module path is now `github.com/KaiLepler/speedgrapher`. Upstream still uses `github.com/danicat/speedgrapher`, so merges will conflict on `import` lines. After merging, run:
+> `grep -rl 'github.com/danicat/speedgrapher' --include='*.go' . | xargs sed -i '' 's#github.com/danicat/speedgrapher#github.com/KaiLepler/speedgrapher#g'`
+
+Your repo only has `origin` right now. To get Dani's upstream changes, add it once:
 
 ```bash
 git remote add upstream https://github.com/danicat/speedgrapher.git
@@ -131,7 +135,7 @@ So the order matters: **commit → tag → build**. If you build before tagging,
 | Tag format | Automatic: `v` + VERSION (e.g. `v0.11.0`) | The `v` prefix is **required**. The release workflow only triggers on `v*` tags |
 | One-off local version | `make build VERSION=0.11.0-test` | Stamps the binary **without** creating a tag. Good for experiments |
 | `GITHUB_TOKEN` (CI) | Nothing to do: GitHub provides it automatically | The workflow already declares `permissions: contents: write` |
-| Actions on your fork | GitHub → your repo → **Settings → Actions → General** | Forks often have Actions **disabled** by default. Enable them once |
+| Actions on your repo | GitHub → your repo → **Settings → Actions → General** | Already enabled. See [4.3](#43-activating-github-actions) |
 
 Pick the next number using semver:
 - **Patch** `0.10.0 → 0.10.1`: bug fixes, doc fixes, skill text tweaks
@@ -206,18 +210,57 @@ gh release view v0.11.0      # check the published release
 > [!WARNING]
 > **Don't also run `make release` locally** after pushing the tag (the main README lists it as step 6). CI already publishes the release, so running it locally would try to publish a second time and fail or collide. Only use `make release` if you have no CI. It needs `goreleaser` installed and `export GITHUB_TOKEN=$(gh auth token)`.
 
-### 4.2 Fork-specific gotchas
+### 4.2 Repo ownership (done)
 
-> [!CAUTION]
-> These are about your fork vs. Dani's upstream. Worth fixing before your first release.
+Everything now points to **`KaiLepler/speedgrapher`**:
 
-1. **CI Go version mismatch**: `release.yml` pins `go-version: '1.24'`, but `go.mod` requires `go 1.27.1`. Go's toolchain auto-download may cover the gap, but the clean fix is to replace that line with:
-   ```yaml
-   with:
-     go-version-file: go.mod
-   ```
-2. **`install.sh` downloads from upstream**: it has `REPO="danicat/speedgrapher"`. If you want the curl one-liner to install **your** releases, change it to `REPO="KaiLepler/speedgrapher"`.
-3. **Module path is still `github.com/danicat/speedgrapher`**: so `go install github.com/danicat/...@latest` installs **Dani's** version, not yours. `go install github.com/KaiLepler/...` will fail because of the path mismatch. For your fork, install from the local clone (section 5). Only rename the module path if you plan to diverge permanently, since it makes merging upstream harder.
+| What | Value |
+| :--- | :--- |
+| Go module path ([go.mod](file:///Users/kai/Developer/GitHub/speedgrapher/go.mod)) + all imports | `github.com/KaiLepler/speedgrapher` |
+| [install.sh](file:///Users/kai/Developer/GitHub/speedgrapher/install.sh) download source | `REPO="KaiLepler/speedgrapher"` |
+| README install commands | `raw.githubusercontent.com/KaiLepler/...` and `go install github.com/KaiLepler/...` |
+| CI Go version ([release.yml](file:///Users/kai/Developer/GitHub/speedgrapher/.github/workflows/release.yml)) | `go-version-file: go.mod` (always matches `go.mod`) |
+
+> [!IMPORTANT]
+> Your GitHub repo has **no tags and no releases yet**. Your local tags (`v0.5.9` … `v0.10.0`) were never pushed. Until your first release exists, the `curl … install.sh` one-liner and `go install …@latest` won't find anything. Do your first release with section 4.1 (e.g. `VERSION=0.11.0`).
+
+### 4.3 Activating GitHub Actions
+
+Current state of your repo (checked via `gh api`):
+
+| Setting | Current | Needed |
+| :--- | :--- | :--- |
+| Actions enabled | ✅ `enabled: true` | Yes |
+| Allowed actions | ✅ `all` | `all` (needs third-party `goreleaser/goreleaser-action`) |
+| Default workflow permissions | `read` | Fine. `release.yml` asks for `contents: write` itself |
+| `goreleaser` workflow visible | Not yet listed | Shows up after its first run (first `v*` tag push) |
+
+**So nothing needs to be enabled right now.** For reference, or if a release ever fails with `403 Resource not accessible by integration`:
+
+1. Open **https://github.com/KaiLepler/speedgrapher/settings/actions**.
+2. **Actions permissions** → select **Allow all actions and reusable workflows**.
+3. **Workflow permissions** → select **Read and write permissions** → **Save**.
+4. Open the **Actions** tab. If it shows *"Workflows aren't being run on this repository"*, click **Enable**.
+
+Same thing from the terminal:
+
+```bash
+# Inspect
+gh api repos/KaiLepler/speedgrapher/actions/permissions
+gh api repos/KaiLepler/speedgrapher/actions/permissions/workflow
+
+# Enable (only if needed)
+gh api -X PUT repos/KaiLepler/speedgrapher/actions/permissions -F enabled=true -f allowed_actions=all
+gh api -X PUT repos/KaiLepler/speedgrapher/actions/permissions/workflow -f default_workflow_permissions=write
+```
+
+Verify after your first tag push:
+
+```bash
+gh run list --workflow=release.yml     # should show a run for your tag
+gh run watch                           # follow it live
+gh release list                        # release with 3 OS archives
+```
 
 ---
 
@@ -350,7 +393,9 @@ Point HTTP-capable MCP clients at `http://localhost:8080`.
 | Version shows `0.10.0-6-g…` after tagging | You built **before** tagging. Run `make build` again |
 | AGY doesn't see the tools | Check `~/.gemini/config/mcp_config.json` has the entry. Reload MCP servers / restart AGY |
 | Skill edits don't show up in AGY | Rebuild → `cp` → `speedgrapher install --skills --force` |
-| Release workflow didn't run | Tag must start with `v`. Actions must be enabled on the fork. Check with `gh run list` |
+| Release workflow didn't run | Tag must start with `v` and be pushed (`git push origin vX.Y.Z`). See [4.3](#43-activating-github-actions) |
+| Release fails with `403` | Settings → Actions → Workflow permissions → **Read and write** |
+| `install.sh` download 404 | No GitHub release exists yet. Do a release first (4.1) |
 | GoReleaser: "git is in a dirty state" | Commit or stash everything; the tag must point at a clean HEAD |
 | Vale errors on first run | `speedgrapher check`. Vale gets auto-downloaded on first use (needs network) |
 
