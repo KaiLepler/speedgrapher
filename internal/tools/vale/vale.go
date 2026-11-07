@@ -16,10 +16,13 @@ package vale
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/KaiLepler/speedgrapher/internal/safeshell"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -45,6 +48,13 @@ BasedOnStyles = Vale, Google, proselint, write-good
 // If none exists, it checks the current working directory.
 // If still none exists, it falls back to the bundled or user configuration directory.
 func setupValeConfig(valePath string, workspaceDir string) (string, error) {
+	return setupValeConfigContext(context.Background(), valePath, workspaceDir)
+}
+
+func setupValeConfigContext(ctx context.Context, valePath string, workspaceDir string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	absValePath, err := filepath.Abs(valePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve absolute vale path: %w", err)
@@ -115,7 +125,7 @@ func setupValeConfig(valePath string, workspaceDir string) (string, error) {
 
 	// If the styles dir doesn't exist, run vale sync
 	if _, err := os.Stat(stylesPath); os.IsNotExist(err) {
-		res, err := safeshell.Execute(context.Background(), valePath, "sync", "--config", iniPath)
+		res, err := safeshell.ExecuteWithOptions(ctx, safeshell.Options{Timeout: time.Minute, MaxOutputBytes: 1 << 20}, valePath, "sync", "--config", iniPath)
 		if err != nil {
 			outputStr := ""
 			if res != nil {
@@ -225,29 +235,40 @@ func valeHandler(ctx context.Context, _ *mcp.CallToolRequest, input ValeParams, 
 		text = string(data)
 	}
 
-	valePath, err := bootstrapVale(cfg.ValeBinPath)
+	valePath, err := bootstrapValeContext(ctx, cfg.ValeBinPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to bootstrap vale: %w", err)
 	}
 
-	iniPath, err := setupValeConfig(valePath, cfg.WorkspaceDir)
+	iniPath, err := setupValeConfigContext(ctx, valePath, cfg.WorkspaceDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vale config error: %w", err)
 	}
 
 	// Run vale via stdin so we don't need temporary files, ensuring it uses our managed config
 	res, err := safeshell.ExecuteWithOptions(ctx, safeshell.Options{
-		Stdin: strings.NewReader(text),
+		Stdin:          strings.NewReader(text),
+		Timeout:        time.Minute,
+		MaxOutputBytes: 10 << 20,
 	}, valePath, "--config", iniPath, "--ext", ".md", "--output=JSON")
 
-	// Vale returns non-zero for alerts, so we ignore non-zero exit errors when output is produced
-	if err != nil && (res == nil || len(res.Combined) == 0) {
-		return nil, nil, fmt.Errorf("failed to execute vale: %w", err)
+	if res != nil && len(res.Combined) >= 10<<20 {
+		return nil, nil, fmt.Errorf("Vale output exceeds 10 MiB")
+	}
+	// Only structured alert output can turn Vale's non-zero status into a result.
+	if err != nil {
+		var exitErr *safeshell.ExitError
+		if !errors.As(err, &exitErr) || (exitErr.ExitCode != 1 && exitErr.ExitCode != 2) || res == nil || !json.Valid(res.Stdout) {
+			return nil, nil, fmt.Errorf("failed to execute vale: %w", err)
+		}
 	}
 
 	output := ""
 	if res != nil {
-		output = string(res.Combined)
+		if !json.Valid(res.Stdout) {
+			return nil, nil, fmt.Errorf("Vale returned invalid JSON output")
+		}
+		output = string(res.Stdout)
 	}
 
 	return nil, &ValeResult{Output: output, ConfigPath: iniPath}, nil

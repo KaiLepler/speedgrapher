@@ -41,13 +41,14 @@ func newMCPCmd(version string, opts *GlobalOptions, stdout, stderr io.Writer) *c
 				configPath = opts.ConfigPath
 			}
 
-			cfg, _ := config.Load(configPath)
-			var srvOpts []server.Option
-			if cfg != nil {
-				srvOpts = append(srvOpts, server.WithServerConfig(cfg.Server))
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return fmt.Errorf("load configuration: %w", err)
 			}
-
-			srv := server.New(version, srvOpts...)
+			srv := server.New(version,
+				server.WithServerConfig(cfg.Server),
+				server.WithWorkspaceDir(cfg.WorkspaceDir),
+				server.WithToolsConfig(cfg.Tools))
 
 			if listenAddr == "" && httpAddr != "" {
 				listenAddr = httpAddr

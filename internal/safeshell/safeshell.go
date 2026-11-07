@@ -179,18 +179,15 @@ func CommandContextWithOptions(ctx context.Context, opts Options, name string, a
 	// pipes open, which blocks Wait until the orphan exits on its own.
 	configureProcessGroup(cmd)
 
-	if cancelTimeout != nil {
-		cmd.Cancel = func() error {
-			err := killProcessGroup(cmd)
+	cmd.Cancel = func() error {
+		err := killProcessGroup(cmd)
+		if cancelTimeout != nil {
 			cancelTimeout()
-			return err
 		}
-		// Bound how long Wait can block on lingering I/O after cancellation,
-		// so a hung or orphaned descendant can never block the caller
-		// indefinitely even if the group kill above can't fully apply.
-		cmd.WaitDelay = 2 * time.Second
+		return err
 	}
-
+	// Bound inherited pipes even when cancellation comes from the caller.
+	cmd.WaitDelay = 2 * time.Second
 	return cmd, nil
 }
 
@@ -201,9 +198,13 @@ func Execute(ctx context.Context, name string, args ...string) (*Result, error) 
 
 // ExecuteWithOptions executes a command securely with full configuration options.
 func ExecuteWithOptions(ctx context.Context, opts Options, name string, args ...string) (*Result, error) {
-	// CommandContextWithOptions applies opts.Timeout itself and ties the
-	// resulting context's cancellation to killing the process (group), so
-	// no separate timeout wrapping is needed here.
+	// Own and release the timer on success as well as failure.
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+		opts.Timeout = 0
+	}
 	cmd, err := CommandContextWithOptions(ctx, opts, name, args...)
 	if err != nil {
 		return nil, err
@@ -217,6 +218,9 @@ func ExecuteWithOptions(ctx context.Context, opts Options, name string, args ...
 	cmd.Stderr = io.MultiWriter(stderrBuf, combinedBuf)
 
 	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		runErr = ctx.Err()
+	}
 
 	res := &Result{
 		Stdout:   stdoutBuf.Bytes(),

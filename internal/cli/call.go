@@ -22,6 +22,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/KaiLepler/speedgrapher/internal/config"
 	"github.com/KaiLepler/speedgrapher/internal/tools/fog"
 	"github.com/KaiLepler/speedgrapher/internal/tools/seo"
 	"github.com/KaiLepler/speedgrapher/internal/tools/slop"
@@ -30,7 +31,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newCallCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
+func newCallCmd(stdin io.Reader, stdout, stderr io.Writer, opts *GlobalOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "call <tool-name> [json-arguments]",
 		Short: "Invoke a tool directly from the CLI",
@@ -46,7 +47,15 @@ func newCallCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("unknown tool: %q\nRun 'speedgrapher list' to see available tools", toolName)
 			}
 
-			res, err := tool.Invoke(cmd.Context(), args[1:], stdin)
+			cfg, err := config.Load(opts.ConfigPath)
+			if err != nil {
+				return fmt.Errorf("load configuration: %w", err)
+			}
+			enabled := map[string]bool{"fog": cfg.Tools.Fog, "slop": cfg.Tools.Slop, "seo": cfg.Tools.SEO, "vale": cfg.Tools.Vale}
+			if !enabled[tool.Name] {
+				return fmt.Errorf("tool %q is disabled in configuration", tool.Name)
+			}
+			res, err := tool.Invoke(cmd.Context(), args[1:], stdin, cfg)
 			if err != nil {
 				return err
 			}
@@ -95,11 +104,27 @@ func parseArgs(rawArgs []string, stdin io.Reader, target any) error {
 	// 3. If no args provided, try reading from stdin
 	if len(rawArgs) == 0 && stdin != nil {
 		data, err := io.ReadAll(stdin)
-		if err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+		if len(strings.TrimSpace(string(data))) > 0 {
 			trimmed := strings.TrimSpace(string(data))
-			if strings.HasPrefix(trimmed, "{") {
+			if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
 				return json.Unmarshal([]byte(trimmed), target)
 			}
+			switch params := target.(type) {
+			case *fog.FogParams:
+				params.Text = string(data)
+			case *slop.SlopParams:
+				params.Text = string(data)
+			case *vale.ValeParams:
+				params.Text = string(data)
+			case *seo.SEOParams:
+				params.HTML = string(data)
+			default:
+				return errors.New("raw stdin is unsupported for this tool")
+			}
+			return nil
 		}
 	}
 
@@ -110,12 +135,12 @@ func parseArgs(rawArgs []string, stdin io.Reader, target any) error {
 	return fmt.Errorf("invalid arguments: %v (expected JSON string, e.g. '{\"key\": \"value\"}')", rawArgs)
 }
 
-func invokeFog(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.CallToolResult, error) {
+func invokeFog(ctx context.Context, rawArgs []string, stdin io.Reader, cfg *config.Config) (*mcp.CallToolResult, error) {
 	var params fog.FogParams
 	if err := parseArgs(rawArgs, stdin, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments for fog: %w", err)
 	}
-	res, typedRes, err := fog.Handler(ctx, nil, params)
+	res, typedRes, err := fog.Handler(ctx, nil, params, fog.Config{WorkspaceDir: cfg.WorkspaceDir})
 	if err != nil {
 		return nil, err
 	}
@@ -125,12 +150,12 @@ func invokeFog(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.Cal
 	return marshalResult(typedRes)
 }
 
-func invokeSlop(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.CallToolResult, error) {
+func invokeSlop(ctx context.Context, rawArgs []string, stdin io.Reader, cfg *config.Config) (*mcp.CallToolResult, error) {
 	var params slop.SlopParams
 	if err := parseArgs(rawArgs, stdin, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments for slop: %w", err)
 	}
-	res, typedRes, err := slop.Handler(ctx, nil, params)
+	res, typedRes, err := slop.Handler(ctx, nil, params, slop.Config{WorkspaceDir: cfg.WorkspaceDir})
 	if err != nil {
 		return nil, err
 	}
@@ -140,12 +165,12 @@ func invokeSlop(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.Ca
 	return marshalResult(typedRes)
 }
 
-func invokeSEO(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.CallToolResult, error) {
+func invokeSEO(ctx context.Context, rawArgs []string, stdin io.Reader, cfg *config.Config) (*mcp.CallToolResult, error) {
 	var params seo.SEOParams
 	if err := parseArgs(rawArgs, stdin, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments for seo: %w", err)
 	}
-	res, typedRes, err := seo.Handler(ctx, nil, params)
+	res, typedRes, err := seo.Handler(ctx, nil, params, seo.Config{WorkspaceDir: cfg.WorkspaceDir})
 	if err != nil {
 		return nil, err
 	}
@@ -155,12 +180,12 @@ func invokeSEO(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.Cal
 	return marshalResult(typedRes)
 }
 
-func invokeVale(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.CallToolResult, error) {
+func invokeVale(ctx context.Context, rawArgs []string, stdin io.Reader, cfg *config.Config) (*mcp.CallToolResult, error) {
 	var params vale.ValeParams
 	if err := parseArgs(rawArgs, stdin, &params); err != nil {
 		return nil, fmt.Errorf("invalid arguments for vale: %w", err)
 	}
-	res, typedRes, err := vale.Handler(ctx, nil, params)
+	res, typedRes, err := vale.Handler(ctx, nil, params, vale.Config{WorkspaceDir: cfg.WorkspaceDir})
 	if err != nil {
 		return nil, err
 	}

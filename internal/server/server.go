@@ -41,6 +41,11 @@ import (
 // Option defines a functional option for configuring a Server.
 type Option func(*Server)
 
+// WithToolsConfig controls which tools are exposed to MCP clients.
+func WithToolsConfig(cfg config.ToolsConfig) Option {
+	return func(s *Server) { s.tools = cfg }
+}
+
 // WithServerConfig configures allowed origins and timeouts from config.ServerConfig.
 func WithServerConfig(cfg config.ServerConfig) Option {
 	return func(s *Server) {
@@ -113,6 +118,7 @@ func WithInstructions(instructions string) Option {
 
 // Server encapsulates the MCP server and its lifecycle configuration.
 type Server struct {
+	tools           config.ToolsConfig
 	mcpServer       *mcp.Server
 	registerOnce    sync.Once
 	workspaceDir    string
@@ -131,6 +137,7 @@ func New(version string, opts ...Option) *Server {
 	}
 
 	srv := &Server{
+		tools:           config.DefaultToolsConfig(),
 		instructions:    instructions.GetInstructions(),
 		readTimeout:     30 * time.Second,
 		writeTimeout:    5 * time.Minute,
@@ -167,10 +174,18 @@ func New(version string, opts ...Option) *Server {
 // RegisterHandlers wires all tools idempotently using sync.Once.
 func (s *Server) RegisterHandlers() error {
 	s.registerOnce.Do(func() {
-		fog.Register(s.mcpServer, fog.Config{WorkspaceDir: s.workspaceDir})
-		slop.Register(s.mcpServer, slop.Config{WorkspaceDir: s.workspaceDir})
-		seo.Register(s.mcpServer, seo.Config{WorkspaceDir: s.workspaceDir})
-		vale.Register(s.mcpServer, vale.Config{WorkspaceDir: s.workspaceDir})
+		if s.tools.Fog {
+			fog.Register(s.mcpServer, fog.Config{WorkspaceDir: s.workspaceDir})
+		}
+		if s.tools.Slop {
+			slop.Register(s.mcpServer, slop.Config{WorkspaceDir: s.workspaceDir})
+		}
+		if s.tools.SEO {
+			seo.Register(s.mcpServer, seo.Config{WorkspaceDir: s.workspaceDir})
+		}
+		if s.tools.Vale {
+			vale.Register(s.mcpServer, vale.Config{WorkspaceDir: s.workspaceDir})
+		}
 	})
 	return nil
 }

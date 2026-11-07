@@ -15,7 +15,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
+	"github.com/KaiLepler/speedgrapher/internal/httpfetch"
 	"github.com/KaiLepler/speedgrapher/internal/safeshell"
 )
 
@@ -28,6 +30,18 @@ var valeChecksums = map[string]string{
 	"vale_3.13.1_Windows_64-bit.zip":  "cdf83d17277e097b84e34a550c8dd6b870c582c3022caecc4b6b363352dd491c",
 	"vale_3.13.1_macOS_64-bit.tar.gz": "bbc3a94f3e6640b8a8d6e349142cbe3d0f597e6a673fcad5de4ae9dc88e5c7e1",
 	"vale_3.13.1_macOS_arm64.tar.gz":  "b614dfde6324eec403ac540cbcd47132960f8ebe9c21ef0e2352da9b19808689",
+}
+
+func downloadVale(ctx context.Context, client *http.Client, url, expectedChecksum string) ([]byte, error) {
+	data, err := httpfetch.Get(ctx, client, url, 64<<20)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download Vale: %w", err)
+	}
+	hash := sha256.Sum256(data)
+	if hex.EncodeToString(hash[:]) != expectedChecksum {
+		return nil, fmt.Errorf("checksum mismatch for Vale archive")
+	}
+	return data, nil
 }
 
 func getValeAssetInfo() (string, string, error) {
@@ -71,6 +85,13 @@ func getValeAssetInfo() (string, string, error) {
 // If customBinPath is provided, it verifies the binary exists and is executable.
 // Otherwise, it determines the executable directory and downloads/caches the pinned vale binary.
 func bootstrapVale(customBinPath string) (string, error) {
+	return bootstrapValeContext(context.Background(), customBinPath)
+}
+
+func bootstrapValeContext(ctx context.Context, customBinPath string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if customBinPath != "" {
 		absPath, err := filepath.Abs(customBinPath)
 		if err != nil {
@@ -94,7 +115,7 @@ func bootstrapVale(customBinPath string) (string, error) {
 	// 1. Check system PATH first
 	if lookPath, err := safeshell.LookPath("vale"); err == nil {
 		if absLookPath, err := filepath.Abs(lookPath); err == nil {
-			if res, err := safeshell.Execute(context.Background(), absLookPath, "-v"); err == nil && len(res.Stdout) > 0 {
+			if res, err := safeshell.ExecuteWithOptions(ctx, safeshell.Options{Timeout: 5 * time.Second}, absLookPath, "-v"); err == nil && len(res.Stdout) > 0 {
 				return absLookPath, nil
 			}
 		}
@@ -127,7 +148,7 @@ func bootstrapVale(customBinPath string) (string, error) {
 
 	// Check if already installed and working
 	if _, err := os.Stat(valePath); err == nil {
-		if res, err := safeshell.Execute(context.Background(), valePath, "-v"); err == nil && len(res.Stdout) > 0 {
+		if res, err := safeshell.ExecuteWithOptions(ctx, safeshell.Options{Timeout: 5 * time.Second}, valePath, "-v"); err == nil && len(res.Stdout) > 0 {
 			return valePath, nil
 		}
 	}
@@ -142,26 +163,9 @@ func bootstrapVale(customBinPath string) (string, error) {
 	}
 
 	url := valeBaseURL + assetName
-	resp, err := http.Get(url)
+	data, err := downloadVale(ctx, nil, url, expectedChecksum)
 	if err != nil {
-		return "", fmt.Errorf("failed to download vale: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download vale, status code: %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read downloaded data: %w", err)
-	}
-
-	// Verify checksum
-	hash := sha256.Sum256(data)
-	actualChecksum := hex.EncodeToString(hash[:])
-	if actualChecksum != expectedChecksum {
-		return "", fmt.Errorf("checksum mismatch for %s: expected %s, got %s", assetName, expectedChecksum, actualChecksum)
+		return "", err
 	}
 
 	// Extract
@@ -224,14 +228,24 @@ func extractTarGz(data []byte, destPath string, binName string) error {
 }
 
 func writeExecutable(r io.Reader, destPath string) error {
-	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	f, err := os.CreateTemp(filepath.Dir(destPath), ".vale-*")
 	if err != nil {
 		return fmt.Errorf("failed to open destination file %s: %w", destPath, err)
 	}
-	defer func() { _ = f.Close() }()
-
-	if _, err := io.Copy(f, r); err != nil {
+	defer os.Remove(f.Name())
+	defer f.Close()
+	n, err := io.Copy(f, io.LimitReader(r, (128<<20)+1))
+	if err != nil {
 		return fmt.Errorf("failed to write binary: %w", err)
 	}
-	return nil
+	if n > 128<<20 {
+		return fmt.Errorf("extracted Vale binary exceeds size limit")
+	}
+	if err := f.Chmod(0755); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), destPath)
 }

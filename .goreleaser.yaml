@@ -1,6 +1,10 @@
 # .goreleaser.yaml
 version: 2
 
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
 before:
   hooks:
     - go mod tidy
