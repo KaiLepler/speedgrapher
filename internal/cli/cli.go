@@ -22,6 +22,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/KaiLepler/speedgrapher/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 )
@@ -35,7 +36,7 @@ type ToolDef struct {
 	Aliases     []string
 	Description string
 	Usage       string
-	Invoke      func(ctx context.Context, rawArgs []string, stdin io.Reader) (*mcp.CallToolResult, error)
+	Invoke      func(ctx context.Context, rawArgs []string, stdin io.Reader, cfg *config.Config) (*mcp.CallToolResult, error)
 }
 
 // GetTools returns the list of all registered tools.
@@ -125,7 +126,7 @@ func NewRootCmd(version string, stdin io.Reader, stdout, stderr io.Writer) *cobr
 	rootCmd.PersistentFlags().BoolVarP(&globalOpts.Quiet, "quiet", "q", false, "Quiet output")
 
 	// Register Subcommands
-	rootCmd.AddCommand(newCallCmd(stdin, stdout, stderr))
+	rootCmd.AddCommand(newCallCmd(stdin, stdout, stderr, &globalOpts))
 	rootCmd.AddCommand(newMCPCmd(version, &globalOpts, stdout, stderr))
 	rootCmd.AddCommand(newCheckCmd(stdout, stderr))
 	rootCmd.AddCommand(newInitCmd(stdout, stderr))

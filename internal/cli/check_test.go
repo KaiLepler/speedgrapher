@@ -48,12 +48,12 @@ func (m *mockCheckRunner) RunCommand(_ context.Context, name string, _ ...string
 
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
-		input      string
-		wantMajor  int
-		wantMinor  int
-		wantPatch  int
-		wantPre    string
-		wantDevel  bool
+		input     string
+		wantMajor int
+		wantMinor int
+		wantPatch int
+		wantPre   string
+		wantDevel bool
 	}{
 		{"v3.9.1", 3, 9, 1, "", false},
 		{"3.9.1", 3, 9, 1, "", false},
@@ -141,9 +141,9 @@ func TestChecker_CheckAll_WithMock(t *testing.T) {
 			"go":   "/usr/local/go/bin/go",
 		},
 		outputs: map[string][]byte{
-			"/usr/local/bin/vale":   []byte("vale version 3.9.1"),
-			"/usr/bin/git":          []byte("git version 2.39.5"),
-			"/usr/local/go/bin/go":  []byte("go version go1.26.3 darwin/arm64"),
+			"/usr/local/bin/vale":  []byte("vale version 3.9.1"),
+			"/usr/bin/git":         []byte("git version 2.39.5"),
+			"/usr/local/go/bin/go": []byte("go version go1.26.3 darwin/arm64"),
 		},
 	}
 

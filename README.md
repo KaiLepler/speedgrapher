@@ -1,6 +1,6 @@
 # Speedgrapher
 
-Speedgrapher is a specialized agentic editorial suite and Model Context Protocol (MCP) server for technical authors, engineering bloggers, and AI agents. It delivers AST-level readability analytics, automated AI cliché ("slop") detection, multi-point technical SEO auditing, and Vale style linting.
+Speedgrapher is a specialized agentic editorial suite and Model Context Protocol (MCP) server for technical authors, engineering bloggers, and AI agents. It delivers heuristic readability analytics, automated AI cliché ("slop") detection, multi-point technical SEO auditing, and Vale style linting.
 
 Speedgrapher operates across three integrated surfaces powered by embedded Agent Skills:
 
@@ -18,6 +18,8 @@ Speedgrapher operates across three integrated surfaces powered by embedded Agent
 ### Option A: One-Line Installer (`install.sh`)
 
 Downloads the latest prebuilt release binary (via GoReleaser) and automatically initializes MCP registration and Agent Skills:
+
+The installer resolves a specific release tag and verifies its archive against that release's `checksums.txt` before extraction or execution. Verification failures leave an existing binary untouched. Prebuilt installation requires a published release with checksum assets; use the Go toolchain or local build options if no release is available.
 
 ```bash
 # Global install (Default: ~/.gemini/config)
@@ -101,6 +103,12 @@ speedgrapher call vale '{"text": "This is very unique."}'
 # Pipe text directly into tool execution via stdin
 cat draft.md | speedgrapher call slop
 ```
+
+With no JSON argument, `fog`, `slop`, and `vale` accept plain text on stdin; `seo` accepts raw HTML or Hugo Markdown. JSON objects on stdin remain supported. Input beginning with `{` or `[` is treated as JSON and must be valid; use an explicit JSON `text` field for prose starting with those characters.
+
+### Workspace configuration
+
+Both `mcp` and `call` honor `--config /path/to/speedgrapher.json`. The directory containing that file is the workspace used to resolve relative tool file paths. Invalid configuration is reported instead of silently ignored. Tool flags such as `"tools": {"slop": false}` remove disabled tools from MCP discovery and reject direct CLI calls to them.
 
 ### MCP Server Execution: Stdio vs. Streamable HTTP
 
@@ -245,6 +253,10 @@ You can test and call the streamable server directly with any HTTP client:
     6. **Content Length**: Assesses total body word count ($300+$ words recommended).
     7. **Canonical Tag**: Verifies `<link rel="canonical">` existence.
   - Automatically compiles Hugo Markdown with front matter using local `hugo` CLI when present.
+  - Renders a private copy of the Hugo site, including draft/future/expired posts, without creating temporary content in the original site. File inputs retain their location under the site's standard `content/` directory. Hugo's page list identifies the intended output, including custom slugs, URLs, and permalinks; missing or ambiguous output is an error.
+  - Local rendering currently supports regular-file sites up to 256 MiB, standard `content/` layouts, and HTML permalinks. Symlinks and non-HTML outputs are rejected explicitly. Custom absolute content/resource mounts and external output paths are not supported; only run Hugo against trusted site configuration and templates.
+  - URL downloads have a 30-second timeout and 10 MiB limit; Hugo work has a two-minute deadline. Request cancellation stops both HTTP work and Hugo subprocesses.
+  - Each `score_impact` is a nonnegative deduction. The total score is `max(0, 100 - sum(score_impact))`; keyword warnings never downgrade missing-metadata failures.
 
 #### `vale`
 - **Parameters**:
@@ -254,6 +266,7 @@ You can test and call the streamable server directly with any HTTP client:
   - Bootstraps and executes a pinned Vale binary (v3.13.1) with SHA256 integrity checks.
   - Prioritizes project-specific `.vale.ini` in the workspace or falls back to bundled rules.
   - Respects workspace `speedgrapher.json` accept lists to suppress false positives on approved domain terms.
+  - Bootstrap downloads are bounded to 64 MiB and 30 seconds; sync and lint subprocesses have one-minute deadlines and honor request cancellation. Downloaded binaries are checksum-verified and staged before replacement.
 
 ---
 
@@ -295,6 +308,15 @@ make test
 Generate test coverage report:
 ```bash
 make test-cov
+```
+
+Pull requests and branch pushes run formatting checks, tests, race detection, vet, and offline installer integrity tests on Linux and macOS. A separate job runs real-Hugo integration tests with Hugo 0.145.0, and tagged releases depend on successful validation.
+
+Without Hugo on PATH, real-Hugo tests skip locally. To require them, install Hugo separately and run `HUGO_INTEGRATION=1 go test -v ./internal/tools/seo`. Mocked rendering/cancellation tests run without Hugo.
+
+Run installer tests without installing anything or downloading binaries:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 ### Versioning & Release Workflow

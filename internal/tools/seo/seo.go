@@ -15,17 +15,16 @@
 package seo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/KaiLepler/speedgrapher/internal/httpfetch"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"gopkg.in/yaml.v3"
 )
 
 // Config holds configuration options for the SEO tool.
@@ -100,25 +99,21 @@ func Handler(ctx context.Context, req *mcp.CallToolRequest, input SEOParams, cfg
 	return seoHandler(ctx, req, input, cfg...)
 }
 
-func seoHandler(_ context.Context, _ *mcp.CallToolRequest, input SEOParams, cfg ...Config) (*mcp.CallToolResult, *SEOResult, error) {
+func seoHandler(ctx context.Context, _ *mcp.CallToolRequest, input SEOParams, cfg ...Config) (*mcp.CallToolResult, *SEOResult, error) {
 	c := resolveConfig(cfg...)
 	var doc *goquery.Document
 	var err error
 
 	if input.URL != "" {
-		resp, fetchErr := http.Get(input.URL)
+		data, fetchErr := httpfetch.Get(ctx, nil, input.URL, 10<<20)
 		if fetchErr != nil {
 			return nil, nil, fmt.Errorf("failed to fetch URL: %w", fetchErr)
 		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return nil, nil, fmt.Errorf("failed to fetch URL, status code: %d", resp.StatusCode)
-		}
-		doc, err = goquery.NewDocumentFromReader(resp.Body)
+		doc, err = goquery.NewDocumentFromReader(bytes.NewReader(data))
 	} else if input.HTML != "" {
 		// Check if input is Hugo Markdown (starts with ---)
 		if strings.HasPrefix(strings.TrimSpace(input.HTML), "---") {
-			htmlContent, convErr := convertHugoMarkdownToHTML(input.HTML, c.WorkspaceDir)
+			htmlContent, convErr := renderHugoMarkdown(ctx, input.HTML, c.WorkspaceDir, "")
 			if convErr != nil {
 				return nil, nil, fmt.Errorf("failed to convert Hugo Markdown: %w", convErr)
 			}
@@ -144,7 +139,7 @@ func seoHandler(_ context.Context, _ *mcp.CallToolRequest, input SEOParams, cfg 
 
 		content := string(data)
 		if strings.HasPrefix(strings.TrimSpace(content), "---") || strings.HasSuffix(strings.ToLower(filePath), ".md") || strings.HasSuffix(strings.ToLower(filePath), ".markdown") {
-			htmlContent, convErr := convertHugoMarkdownToHTML(content, c.WorkspaceDir)
+			htmlContent, convErr := renderHugoMarkdown(ctx, content, c.WorkspaceDir, filePath)
 			if convErr != nil {
 				return nil, nil, fmt.Errorf("failed to convert Hugo Markdown from %s: %w", filePath, convErr)
 			}
@@ -193,96 +188,18 @@ func findHugoRoot(startDir string) (string, error) {
 }
 
 func convertHugoMarkdownToHTML(markdown string, workspaceDir string) (string, error) {
-	root, err := findHugoRoot(workspaceDir)
-	if err != nil {
-		return "", fmt.Errorf("hugo root not found: %w", err)
-	}
-
-	contentDir := filepath.Join(root, "content")
-	if err := os.MkdirAll(contentDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create content dir: %w", err)
-	}
-
-	// Create a unique temp file in content
-	tempFileName := "speedgrapher_seo_temp.md"
-	tempFilePath := filepath.Join(contentDir, tempFileName)
-	if err := os.WriteFile(tempFilePath, []byte(markdown), 0644); err != nil {
-		return "", fmt.Errorf("failed to write temp markdown: %w", err)
-	}
-	defer func() { _ = os.Remove(tempFilePath) }()
-
-	tempOut, err := os.MkdirTemp("", "speedgrapher_hugo_out")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp out dir: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(tempOut) }()
-
-	tempOutAbs, err := filepath.Abs(tempOut)
-	if err == nil {
-		tempOut = tempOutAbs
-	}
-
-	// Run hugo
-	cmd := exec.Command("hugo", "--destination", tempOut, "--quiet")
-	cmd.Dir = root
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("hugo failed: %s (error: %w)", string(out), err)
-	}
-
-	// Try to find the rendered HTML.
-	// We check for the filename without extension, then look for index.html there.
-	targetSlug := "speedgrapher_seo_temp"
-
-	// Parse frontmatter to check for slug or url overrides which change the output path
-	parts := strings.SplitN(markdown, "---", 3)
-	if len(parts) >= 3 {
-		var fm map[string]interface{}
-		if err := yaml.Unmarshal([]byte(parts[1]), &fm); err == nil {
-			if url, ok := fm["url"].(string); ok {
-				targetSlug = strings.Trim(url, "/")
-			} else if slug, ok := fm["slug"].(string); ok {
-				targetSlug = slug
-			}
-		}
-	}
-
-	renderedPath := filepath.Join(tempOut, targetSlug, "index.html")
-
-	// If the expected path doesn't exist, search for any index.html as a fallback
-	if _, err := os.Stat(renderedPath); os.IsNotExist(err) {
-		found := ""
-		_ = filepath.Walk(tempOut, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && strings.HasSuffix(path, "index.html") {
-				// We prefer a path that contains our slug
-				if strings.Contains(path, targetSlug) {
-					found = path
-					return fmt.Errorf("found")
-				}
-				// Otherwise, keep the first one we find
-				if found == "" {
-					found = path
-				}
-			}
-			return nil
-		})
-		renderedPath = found
-	}
-
-	if renderedPath == "" {
-		return "", fmt.Errorf("could not find rendered HTML in %s", tempOut)
-	}
-
-	htmlBytes, err := os.ReadFile(renderedPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read rendered HTML: %w", err)
-	}
-
-	return string(htmlBytes), nil
+	return renderHugoMarkdown(context.Background(), markdown, workspaceDir, "")
 }
 
 func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 	checks := []SEOCheck{}
 	score := 100
+	previousScore := score
+	addCheck := func(check SEOCheck) {
+		check.ScoreImpact = previousScore - score
+		previousScore = score
+		checks = append(checks, check)
+	}
 	keyword = strings.ToLower(keyword)
 
 	// 1. Title Check
@@ -298,11 +215,13 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		score -= 5
 	}
 	if keyword != "" && !strings.Contains(strings.ToLower(title), keyword) {
-		titleCheck.Status = "warning"
+		if titleCheck.Status != "fail" {
+			titleCheck.Status = "warning"
+		}
 		titleCheck.Description += fmt.Sprintf(" Keyword '%s' not found in title.", keyword)
 		score -= 5
 	}
-	checks = append(checks, titleCheck)
+	addCheck(titleCheck)
 
 	// 2. Meta Description Check
 	desc := ""
@@ -322,11 +241,13 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		score -= 5
 	}
 	if keyword != "" && !strings.Contains(strings.ToLower(desc), keyword) {
-		descCheck.Status = "warning"
+		if descCheck.Status != "fail" {
+			descCheck.Status = "warning"
+		}
 		descCheck.Description += fmt.Sprintf(" Keyword '%s' not found in description.", keyword)
 		score -= 5
 	}
-	checks = append(checks, descCheck)
+	addCheck(descCheck)
 
 	// 3. H1 Check
 	h1s := doc.Find("h1")
@@ -349,7 +270,7 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		h1Check.Description += fmt.Sprintf(" Keyword '%s' not found in H1.", keyword)
 		score -= 5
 	}
-	checks = append(checks, h1Check)
+	addCheck(h1Check)
 
 	// 4. Images Alt Text
 	imgs := doc.Find("img")
@@ -365,7 +286,7 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		imgCheck.Description = fmt.Sprintf("%d images are missing alt text.", missingAlt)
 		score -= 5
 	}
-	checks = append(checks, imgCheck)
+	addCheck(imgCheck)
 
 	// 5. Links
 	links := doc.Find("a")
@@ -375,7 +296,7 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		linkCheck.Description = "No links found on the page."
 		score -= 5
 	}
-	checks = append(checks, linkCheck)
+	addCheck(linkCheck)
 
 	// 6. Word Count (Simple approximation)
 	bodyText := strings.TrimSpace(doc.Find("body").Text())
@@ -387,7 +308,7 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		wordCheck.Description = fmt.Sprintf("Content is thin (%d words). Aim for at least 300 words.", wordCount)
 		score -= 10
 	}
-	checks = append(checks, wordCheck)
+	addCheck(wordCheck)
 
 	// 7. Canonical Tag
 	canonical := ""
@@ -402,7 +323,7 @@ func analyzeSEO(doc *goquery.Document, keyword string) *SEOResult {
 		canonCheck.Description = "Canonical tag is missing."
 		score -= 5
 	}
-	checks = append(checks, canonCheck)
+	addCheck(canonCheck)
 
 	if score < 0 {
 		score = 0

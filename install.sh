@@ -62,6 +62,10 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -v|--version)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'Error: --version requires a value.\n' >&2
+        exit 1
+      fi
       VERSION="$2"
       shift 2
       ;;
@@ -113,17 +117,29 @@ if [ "${BUILD_FROM_SOURCE}" != "true" ]; then
   echo -e "📦 ${BLUE}[Binary] Fetching prebuilt binary for ${OS}.${ARCH}...${NC}"
 
   if [ "${VERSION}" = "latest" ]; then
-    RELEASE_URL="https://github.com/${REPO}/releases/latest/download/${OS}.${ARCH}.speedgrapher.tar.gz"
-  else
-    CLEAN_VER="${VERSION#v}"
-    RELEASE_URL="https://github.com/${REPO}/releases/download/v${CLEAN_VER}/${OS}.${ARCH}.speedgrapher.tar.gz"
+    # Resolve once: archive and checksum must refer to the same immutable tag.
+    RELEASE_PAGE="$(curl -fsSL --connect-timeout 10 --max-time 60 -o /dev/null \
+      -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
+    case "${RELEASE_PAGE}" in
+      "https://github.com/${REPO}/releases/tag/"*) VERSION="${RELEASE_PAGE##*/}" ;;
+      *) printf 'Error: could not resolve latest release tag.\n' >&2; exit 1 ;;
+    esac
+  fi
+  CLEAN_VER="${VERSION#v}"
+  if [[ ! "${CLEAN_VER}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][[:alnum:].-]+)?$ ]]; then
+    printf 'Error: invalid release version: %s\n' "${VERSION}" >&2
+    exit 1
   fi
 
+  ASSET="${OS}.${ARCH}.speedgrapher.tar.gz"
+  RELEASE_BASE="https://github.com/${REPO}/releases/download/v${CLEAN_VER}"
+  RELEASE_URL="${RELEASE_BASE}/${ASSET}"
   TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "${TMP_DIR}"' EXIT
+  STAGED_BIN=""
+  trap 'rm -rf "${TMP_DIR}"; if [ -n "${STAGED_BIN}" ]; then rm -f "${STAGED_BIN}"; fi' EXIT
   TAR_FILE="${TMP_DIR}/speedgrapher.tar.gz"
 
-  if ! curl -fsSL "${RELEASE_URL}" -o "${TAR_FILE}" 2>/dev/null; then
+  if ! curl -fsSL --connect-timeout 10 --max-time 120 "${RELEASE_URL}" -o "${TAR_FILE}"; then
     echo -e "${RED}❌ Error: Failed to download prebuilt release for ${OS}.${ARCH}.${NC}" >&2
     echo -e "   URL: ${RELEASE_URL}" >&2
     echo "" >&2
@@ -131,21 +147,48 @@ if [ "${BUILD_FROM_SOURCE}" != "true" ]; then
     exit 1
   fi
 
-  if ! tar -xzf "${TAR_FILE}" -C "${TMP_DIR}" 2>/dev/null; then
+  curl -fsSL --connect-timeout 10 --max-time 60 "${RELEASE_BASE}/checksums.txt" \
+    -o "${TMP_DIR}/checksums.txt"
+  EXPECTED="$(awk -v asset="${ASSET}" '$2 == asset || $2 == "*" asset {print $1; n++} END {if (n != 1) exit 1}' "${TMP_DIR}/checksums.txt")"
+  if [[ ! "${EXPECTED}" =~ ^[[:xdigit:]]{64}$ ]]; then
+    printf 'Error: missing or invalid release checksum.\n' >&2
+    exit 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL="$(sha256sum "${TAR_FILE}")"
+  else
+    ACTUAL="$(shasum -a 256 "${TAR_FILE}")"
+  fi
+  ACTUAL="${ACTUAL%% *}"
+  if [ "${ACTUAL}" != "${EXPECTED}" ]; then
+    printf 'Error: release checksum mismatch; installed binary was not changed.\n' >&2
+    exit 1
+  fi
+
+  # Extract only the known binary entry, not arbitrary archive paths.
+  if tar -tzf "${TAR_FILE}" bin/speedgrapher >/dev/null 2>&1; then
+    BIN_ENTRY="bin/speedgrapher"
+  elif tar -tzf "${TAR_FILE}" speedgrapher >/dev/null 2>&1; then
+    BIN_ENTRY="speedgrapher"
+  else
+    printf 'Error: binary not found in release archive.\n' >&2
+    exit 1
+  fi
+  if ! tar -xzf "${TAR_FILE}" -C "${TMP_DIR}" "${BIN_ENTRY}"; then
     echo -e "${RED}❌ Error: Failed to extract release archive.${NC}" >&2
     exit 1
   fi
 
-  if [ -f "${TMP_DIR}/bin/speedgrapher" ]; then
-    mv "${TMP_DIR}/bin/speedgrapher" "${BIN_PATH}"
-  elif [ -f "${TMP_DIR}/speedgrapher" ]; then
-    mv "${TMP_DIR}/speedgrapher" "${BIN_PATH}"
-  else
-    echo -e "${RED}❌ Error: Binary not found in extracted archive.${NC}" >&2
+  if [ ! -f "${TMP_DIR}/${BIN_ENTRY}" ] || [ -L "${TMP_DIR}/${BIN_ENTRY}" ]; then
+    printf 'Error: release binary is not a regular file.\n' >&2
     exit 1
   fi
 
-  chmod +x "${BIN_PATH}"
+  STAGED_BIN="$(mktemp "${INSTALL_BIN_DIR}/.speedgrapher.XXXXXX")"
+  cp "${TMP_DIR}/${BIN_ENTRY}" "${STAGED_BIN}"
+  chmod 755 "${STAGED_BIN}"
+  mv -f "${STAGED_BIN}" "${BIN_PATH}"
+  STAGED_BIN=""
   echo -e "  ${GREEN}✓ Downloaded and installed to ${BIN_PATH}${NC}"
   rm -rf "${TMP_DIR}"
 
