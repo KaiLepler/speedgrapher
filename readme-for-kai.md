@@ -336,11 +336,11 @@ Suggested writing pipeline for a blog post:
 
 ```mermaid
 flowchart LR
-    I["@tech-interviewer<br/>gather facts"] --> W["@tech-writer<br/>draft"]
-    W --> D["@deslopify<br/>clean voice"]
-    D --> R["@tech-reviewer<br/>fog + slop + vale"]
+    I["@tech-interviewer\ngather facts"] --> W["@tech-writer\ndraft"]
+    W --> D["@deslopify\nclean voice"]
+    D --> R["@tech-reviewer\nfog + slop + vale"]
     R -- "fails" --> W
-    R -- "passes" --> P["@tech-publisher<br/>SEO + checklist"]
+    R -- "passes" --> P["@tech-publisher\nSEO + checklist"]
 ```
 
 ### 6.2 Per-project setup (optional)
