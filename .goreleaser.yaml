@@ -7,7 +7,7 @@ checksum:
 
 before:
   hooks:
-    - go mod tidy
+    - go mod tidy -diff
     - go generate ./...
 
 builds:
